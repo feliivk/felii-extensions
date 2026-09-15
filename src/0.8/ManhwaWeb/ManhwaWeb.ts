@@ -27,7 +27,7 @@ const SEE_CACHE_TTL = 60_000; // 1 min
 const SEE_CACHE_MAX = 50;
 
 export const ManhwaWebInfo: SourceInfo = {
-    version: '1.2.0',
+    version: '1.2.1',
     name: 'ManhwaWeb',
     icon: 'icon.png',
     author: 'Felii',
@@ -42,7 +42,9 @@ export const ManhwaWebInfo: SourceInfo = {
 interface ApiChapter {
     link?: string;
     chapter?: string | number;
-    create?: string;
+    create?: string | number;
+    // Los capítulos recién subidos solo traen link/create aquí dentro
+    versions?: { link?: string; create?: string | number }[];
 }
 
 interface SeeResponse {
@@ -205,17 +207,19 @@ export class ManhwaWeb extends Source {
 
         for (const ch of rawChapters) {
             let chId = "";
-            if (ch.link) {
-                chId = ch.link.split('/').filter(Boolean).pop() ?? "";
+            const link = ch.link ?? ch.versions?.find((v) => v.link)?.link;
+            if (link) {
+                chId = link.split('/').filter(Boolean).pop() ?? "";
             }
-            if (!chId) chId = `${mangaId}-${ch.chapter}`;
+            if (!chId) chId = `${mangaId}-${ch.chapter}_01`;
+            const created = ch.create ?? ch.versions?.[0]?.create;
 
             chapters.push(createChapter({
                 id: chId,
                 mangaId: mangaId,
                 name: `Capítulo ${ch.chapter}`,
                 chapNum: parseFloat(String(ch.chapter)) || 0, // Soporta decimales (ej. 51.2)
-                time: ch.create ? new Date(ch.create) : new Date(),
+                time: created ? new Date(created) : new Date(),
                 langCode: "es",
             }));
         }

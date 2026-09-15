@@ -39,7 +39,9 @@ const SEE_CACHE_MAX = 50;
 interface ApiChapter {
     link?: string;
     chapter?: string | number;
-    create?: string;
+    create?: string | number;
+    // Los capítulos recién subidos solo traen link/create aquí dentro
+    versions?: { link?: string; create?: string | number }[];
 }
 
 interface SeeResponse {
@@ -305,15 +307,17 @@ export class ManhwaWebExtension implements ManhwaWebImplementation {
         for (const ch of rawChapters) {
             let chId = "";
             // El slug del capítulo incluye el del manga → puede traer `¡`/`!` también
-            if (ch.link) chId = this.toSafeId(ch.link.split("/").filter(Boolean).pop() ?? "");
-            if (!chId) chId = `${sourceManga.mangaId}-${ch.chapter}`;
+            const link = ch.link ?? ch.versions?.find((v) => v.link)?.link;
+            if (link) chId = this.toSafeId(link.split("/").filter(Boolean).pop() ?? "");
+            if (!chId) chId = `${sourceManga.mangaId}-${ch.chapter}_01`;
+            const created = ch.create ?? ch.versions?.[0]?.create;
 
             chapters.push({
                 chapterId: chId,
                 sourceManga,
                 title: `Capítulo ${ch.chapter}`,
                 chapNum: parseFloat(String(ch.chapter)) || 0,
-                publishDate: ch.create ? new Date(ch.create) : undefined,
+                publishDate: created ? new Date(created) : undefined,
                 langCode: "es",
             });
         }

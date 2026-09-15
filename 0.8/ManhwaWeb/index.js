@@ -471,7 +471,7 @@ const USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) Apple
 const SEE_CACHE_TTL = 60000; // 1 min
 const SEE_CACHE_MAX = 50;
 exports.ManhwaWebInfo = {
-    version: '1.2.0',
+    version: '1.2.1',
     name: 'ManhwaWeb',
     icon: 'icon.png',
     author: 'Felii',
@@ -601,17 +601,19 @@ class ManhwaWeb extends types_1.Source {
         const chapters = [];
         for (const ch of rawChapters) {
             let chId = "";
-            if (ch.link) {
-                chId = ch.link.split('/').filter(Boolean).pop() ?? "";
+            const link = ch.link ?? ch.versions?.find((v) => v.link)?.link;
+            if (link) {
+                chId = link.split('/').filter(Boolean).pop() ?? "";
             }
             if (!chId)
-                chId = `${mangaId}-${ch.chapter}`;
+                chId = `${mangaId}-${ch.chapter}_01`;
+            const created = ch.create ?? ch.versions?.[0]?.create;
             chapters.push(createChapter({
                 id: chId,
                 mangaId: mangaId,
                 name: `Capítulo ${ch.chapter}`,
                 chapNum: parseFloat(String(ch.chapter)) || 0,
-                time: ch.create ? new Date(ch.create) : new Date(),
+                time: created ? new Date(created) : new Date(),
                 langCode: "es",
             }));
         }
