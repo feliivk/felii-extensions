@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-09-15T00:42:08.424Z",
+  "buildTime": "2026-09-20T01:52:26.027Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -118,6 +118,44 @@
         }
       ],
       "id": "ManhwaWeb"
+    },
+    {
+      "name": "NOVA Novelas Ligeras",
+      "description": "Novelas ligeras y web en español de NOVA (novelasligeras.net)",
+      "version": "1.0.0",
+      "icon": "icon.png",
+      "language": "es",
+      "contentRating": "MATURE",
+      "capabilities": [
+        4,
+        64,
+        1,
+        16
+      ],
+      "badges": [
+        {
+          "label": "Novelas",
+          "textColor": "#ffffff",
+          "backgroundColor": "#7c3aed"
+        },
+        {
+          "label": "Español",
+          "textColor": "#ffffff",
+          "backgroundColor": "#2563eb"
+        },
+        {
+          "label": "Cloudflare",
+          "textColor": "#ffffff",
+          "backgroundColor": "#f97316"
+        }
+      ],
+      "developers": [
+        {
+          "name": "Felii",
+          "github": "https://github.com/feliivk"
+        }
+      ],
+      "id": "NovelasLigeras"
     },
     {
       "name": "Olympus",
