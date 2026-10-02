@@ -21587,11 +21587,24 @@ const API_URL = "https://api.hivetoons.org";
 const STORAGE_HOST = "storage.hivetoon.com";
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const FALLBACK_COVER = "https://placehold.co/400x600?text=No+Cover";
-// Caché de la página de serie (la comparten getMangaDetails y getChapters)
-const SERIES_CACHE_TTL = 60000; // 1 min
-const SERIES_CACHE_MAX = 30;
+// Caché del HTML de /series/{slug} y del home (getMangaDetails/getChapters y las
+// secciones del home reutilizan la misma página)
+const PAGE_CACHE_TTL = 60000;
+const PAGE_CACHE_MAX = 30;
+// Secciones del home: clave del estado embebido → sección de Paperback.
+// `todayPosts` viene envuelto en {data:{posts:[...]}}, el resto son arrays.
+const HOME_SECTIONS = [
+    { key: "combinedSliderPosts", title: "Featured", large: true },
+    { key: "todayPosts", title: "Popular Today", large: false },
+    { key: "latestMangaPosts", title: "Latest Releases", large: false },
+    { key: "weeklyPosts", title: "Popular This Week", large: false },
+    { key: "monthlyPosts", title: "Popular This Month", large: false },
+];
+// Otras claves del estado que delimitan el final de una sección
+// (firstHeroImageSrc va justo después del slider, que es la última).
+const HOME_OTHER_KEYS = ["latestNovelPosts", "publishedCollections", "firstHeroImageSrc"];
 exports.HiveToonsInfo = {
-    version: '1.0.1',
+    version: '1.1.0',
     name: 'HiveToons',
     icon: 'icon.png',
     author: 'Felii',
@@ -21623,52 +21636,73 @@ class HiveToons extends types_1.Source {
                 },
             },
         });
-        // Caché del HTML de /series/{slug} (evita pedir la página dos veces al abrir un manga)
-        this.seriesCache = new Map();
+        this.pageCache = new Map();
     }
     CloudFlareError(status) {
         if (status === 503 || status === 403) {
             throw new Error(`CLOUDFLARE BYPASS ERROR: Please go to the homepage of the source and press Cloudflare Bypass. Status code: ${status}`);
         }
     }
-    // Descarga (con caché) el HTML de la serie con las comillas ya desescapadas.
-    // Los datos de la serie vienen serializados (Astro) dentro de atributos props="{...}"
-    // HTML-escapados; al reemplazar &quot; por " quedan extraíbles con regex.
-    async getSeriesHTML(mangaId) {
-        const now = Date.now();
-        const cached = this.seriesCache.get(mangaId);
-        if (cached && cached.expiry > now)
-            return cached.data;
-        const request = createRequestObject({
-            url: `${WEB_URL}/series/${mangaId}`,
-            method: "GET"
-        });
+    async fetchText(url) {
+        const request = createRequestObject({ url, method: "GET" });
         const response = await this.requestManager.schedule(request, 1);
         this.CloudFlareError(response.status);
-        const data = (response.data || "").replace(/&quot;/g, '"');
-        if (this.seriesCache.size >= SERIES_CACHE_MAX)
-            this.seriesCache.clear();
-        this.seriesCache.set(mangaId, { data, expiry: now + SERIES_CACHE_TTL });
+        return response.data || "";
+    }
+    // HTML de una página con el estado embebido ya normalizado (ver stripRefs).
+    async getPageState(path) {
+        const now = Date.now();
+        const cached = this.pageCache.get(path);
+        if (cached && cached.expiry > now)
+            return cached.data;
+        const data = this.stripRefs(await this.fetchText(`${WEB_URL}${path}`));
+        if (this.pageCache.size >= PAGE_CACHE_MAX)
+            this.pageCache.clear();
+        this.pageCache.set(path, { data, expiry: now + PAGE_CACHE_TTL });
         return data;
     }
-    // Decodifica entidades HTML comunes (sinopsis/títulos vienen escapados)
+    getSeriesHTML(mangaId) {
+        return this.getPageState(`/series/${mangaId}`);
+    }
+    // El sitio embebe su estado como un objeto JS serializado con Seroval:
+    // claves sin comillas, `!0`/`!1` como booleanos y una asignación de
+    // referencia `$R[n]=` delante de cada objeto/array. Quitándolas queda un
+    // literal plano donde `key:"valor"` y `key:[...]` se extraen con regex.
+    stripRefs(html) {
+        return html.replace(/\$R\[\d+\]=/g, "");
+    }
+    // Cadenas del estado: escapes JS (Seroval emite `<` como \x3C) y, después,
+    // entidades HTML que vengan del propio contenido.
+    decodeString(text) {
+        const unescaped = (text || "").replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g, (_m, esc) => {
+            if (esc[0] === "u")
+                return String.fromCodePoint(parseInt(esc.replace(/[u{}]/g, ""), 16));
+            if (esc[0] === "x")
+                return String.fromCharCode(parseInt(esc.slice(1), 16));
+            if (esc === "n")
+                return "\n";
+            if (esc === "r")
+                return "";
+            if (esc === "t")
+                return " ";
+            return esc;
+        });
+        return this.decodeEntities(unescaped);
+    }
+    // Decodifica entidades HTML comunes
     decodeEntities(text) {
         return (text || "")
-            .replace(/\\"/g, '"')
-            .replace(/\\n/g, "\n")
-            .replace(/\\\//g, "/")
+            .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+            .replace(/&#(\d+);/g, (_m, d) => String.fromCodePoint(parseInt(d, 10)))
             .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .replace(/&#x27;/g, "'")
             .replace(/&apos;/g, "'")
-            .replace(/&#x2F;/g, "/")
             .replace(/&nbsp;/g, " ")
             .replace(/&lt;/g, "<")
             .replace(/&gt;/g, ">")
             .replace(/&amp;/g, "&");
     }
-    // postContent es HTML enriquecido (varía por serie: <p> por párrafo, <br><br>,
-    // o un único <p> envolvente); se aplana a texto conservando los saltos.
+    // postContent es HTML enriquecido (<p>, <br>, <strong>...); se aplana a
+    // texto conservando los saltos de párrafo.
     htmlToText(html) {
         return html
             .replace(/<br\s*\/?>/gi, "\n")
@@ -21677,6 +21711,35 @@ class HiveToons extends types_1.Source {
             .replace(/[ \t]+\n/g, "\n")
             .replace(/\n{3,}/g, "\n\n")
             .trim();
+    }
+    // Primer `key:"valor"` dentro de un bloque del estado (ya sin $R[n]=).
+    strField(block, key) {
+        const m = new RegExp(`[{,]${key}:"((?:\\\\.|[^"\\\\])*)"`).exec(block);
+        return m ? this.decodeString(m[1] ?? "") : undefined;
+    }
+    numField(block, key) {
+        const m = new RegExp(`[{,]${key}:(-?[\\d.]+)`).exec(block);
+        const n = m ? parseFloat(m[1] ?? "") : NaN;
+        return Number.isFinite(n) ? n : undefined;
+    }
+    // Nombres del primer `genres:[{id:N,name:"..."},...]` del bloque.
+    genreNames(block) {
+        const start = block.indexOf("genres:[");
+        if (start === -1)
+            return [];
+        const end = block.indexOf("]", start);
+        const list = block.slice(start, end === -1 ? start + 3000 : end);
+        const names = [];
+        const re = /name:"((?:\\.|[^"\\])*)"/g;
+        let m;
+        while ((m = re.exec(list)) !== null) {
+            const label = this.decodeString(m[1] ?? "").trim();
+            if (label)
+                names.push(label);
+            if (names.length >= 25)
+                break;
+        }
+        return names;
     }
     // Mapea el estado textual de la web al enum numérico de Paperback
     mapStatus(statusText) {
@@ -21689,10 +21752,32 @@ class HiveToons extends types_1.Source {
             return 3; // ABANDONED
         return 0; // ONGOING
     }
-    // Extrae un campo string del bloque serializado: "key":[0,"valor"]
-    extractString(data, key) {
-        const m = data.match(new RegExp(`"${key}":\\[0,"((?:\\\\.|[^"\\\\])*)"\\]`));
-        return m ? m[1] : undefined;
+    slugFromId(mangaId) {
+        try {
+            return decodeURIComponent(mangaId);
+        }
+        catch {
+            return mangaId;
+        }
+    }
+    escapeRegExp(s) {
+        return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+    // Bloque `post:{id:N,slug:"<slug>",...}` de la serie dentro del estado.
+    // Devuelve el id numérico del post (necesario para /api/chapters) y el bloque.
+    findSeriesPost(data, mangaId) {
+        const slug = this.escapeRegExp(this.slugFromId(mangaId));
+        let m = new RegExp(`post:\\{id:(\\d+),slug:"${slug}"`, "i").exec(data);
+        if (!m)
+            m = /post:\{id:(\d+),slug:"/.exec(data);
+        if (!m)
+            return { block: "" };
+        const start = m.index;
+        // El objeto de la serie termina donde empieza la lista inicial de capítulos.
+        let end = data.indexOf(",initialChapters:", start);
+        if (end === -1 || end - start > 60000)
+            end = Math.min(data.length, start + 60000);
+        return { id: parseInt(m[1] ?? "", 10) || undefined, block: data.slice(start, end) };
     }
     // Convierte un "post" del API /api/query en un MangaTile
     tileFromPost(post) {
@@ -21707,96 +21792,135 @@ class HiveToons extends types_1.Source {
             image: image
         });
     }
-    // 1. Detalles del manga (parsea los props serializados embebidos en el HTML de la serie)
+    // 1. Detalles del manga (estado embebido en la página de la serie, con meta OG de respaldo)
     async getMangaDetails(mangaId) {
         const data = await this.getSeriesHTML(mangaId);
-        const title = this.decodeEntities(this.extractString(data, "postTitle") || mangaId);
-        // Sinopsis: postContent va seguido siempre de "isNovel"
-        let desc = "Sin descripción disponible.";
-        const descMatch = data.match(/"postContent":\[0,"([\s\S]*?)"\],"isNovel"/);
-        if (descMatch && descMatch[1])
-            desc = this.htmlToText(this.decodeEntities(descMatch[1])) || desc;
-        // Portada: primer featuredImage del storage tras "postContent"
-        let image = FALLBACK_COVER;
-        const postIdx = data.indexOf('"postContent"');
-        if (postIdx !== -1) {
-            const coverMatch = data.slice(postIdx).match(new RegExp(`"featuredImage":\\[0,"(https://${STORAGE_HOST.replace(/\./g, "\\.")}/[^"]+)"\\]`));
-            if (coverMatch)
-                image = coverMatch[1];
-        }
-        if (image === FALLBACK_COVER) {
-            const og = data.match(/og:image"\s+content="([^"]+)"/);
-            if (og)
-                image = og[1];
-        }
-        const status = this.mapStatus(this.extractString(data, "seriesStatus") || "");
-        // Autor (no está en los props; se lee del DOM renderizado)
-        let author = "Desconocido";
-        const authorMatch = data.match(/Author<\/h1>\s*<div[^>]*>\s*<p[^>]*>([^<]+)<\/p>/);
-        if (authorMatch && authorMatch[1].trim())
-            author = this.decodeEntities(authorMatch[1].trim());
-        // Rating medio (escala 0-10 → 0-5 estrellas)
-        let rating = 0;
-        const ratingMatch = data.match(/"averageRating":\[0,([\d.]+)\]/);
-        if (ratingMatch)
-            rating = (parseFloat(ratingMatch[1]) || 0) / 2;
-        // Géneros: bloque "genres":[1,[ ... ]] tras "postContent"
-        const tags = [];
-        const genresIdx = data.indexOf('"genres":[1,[', postIdx === -1 ? 0 : postIdx);
-        if (genresIdx !== -1) {
-            const genresBlock = data.slice(genresIdx, genresIdx + 3000);
-            const nameRe = /"name":\[0,"([^"]+)"\]/g;
-            let gm;
-            while ((gm = nameRe.exec(genresBlock)) !== null) {
-                const label = this.decodeEntities(gm[1]).trim();
-                if (label)
-                    tags.push(createTag({ id: label, label, type: 'blue' }));
-                if (tags.length >= 25)
-                    break;
-            }
-        }
-        // Tipo (MANHWA/MANGA/MANHUA) como tag adicional
-        const seriesType = this.extractString(data, "seriesType");
+        const $ = cheerio.load(data);
+        const { block } = this.findSeriesPost(data, mangaId);
+        const title = this.strField(block, "postTitle")?.trim() ||
+            $('meta[property="og:title"]').attr('content')?.trim() ||
+            mangaId;
+        const altTitles = (this.strField(block, "alternativeTitles") || "")
+            .split(/[,|;]/)
+            .map((t) => t.trim())
+            .filter((t) => t && t !== title);
+        let desc = this.htmlToText(this.strField(block, "postContent") || "");
+        if (!desc)
+            desc = this.htmlToText(this.decodeEntities($('meta[property="og:description"]').attr('content') || ""));
+        if (!desc)
+            desc = "Sin descripción disponible.";
+        // Portada: preferir la del storage propio; si no, cualquier https; si no, og:image.
+        let image = this.strField(block, "featuredImage") || "";
+        const storageCover = new RegExp(`featuredImage:"(https://${STORAGE_HOST.replace(/\./g, "\\.")}/[^"]+)"`).exec(block);
+        if (storageCover?.[1])
+            image = this.decodeString(storageCover[1]);
+        if (!image.startsWith("https://"))
+            image = $('meta[property="og:image"]').attr('content') || FALLBACK_COVER;
+        const status = this.mapStatus(this.strField(block, "seriesStatus") || "");
+        const author = this.strField(block, "author")?.trim() || "Desconocido";
+        const artist = this.strField(block, "artist")?.trim() || "";
+        const avg = this.numField(block, "averageRating");
+        const rating = avg !== undefined ? avg / 2 : 0;
+        const tags = this.genreNames(block).map((label) => createTag({ id: label, label, type: 'blue' }));
+        const seriesType = this.strField(block, "seriesType");
         if (seriesType)
             tags.push(createTag({ id: seriesType, label: seriesType, type: 'green' }));
         return createManga({
             id: mangaId,
-            titles: [title],
+            titles: [title, ...altTitles],
             image: image,
             rating: rating,
             status: status,
             author: author,
+            artist: artist,
             desc: desc,
             hentai: false,
             tags: [createTagSection({ id: '0', label: 'Géneros', tags })]
         });
     }
-    // 2. Capítulos (parsea los objetos serializados embebidos en el HTML de la serie)
+    // Lista completa vía /api/chapters?postId=N. Por defecto devuelve todos los
+    // capítulos; si alguna vez viniera recortada se sigue paginando con `skip`.
+    async fetchApiChapters(postId) {
+        const all = [];
+        for (let i = 0; i < 20; i++) {
+            const skip = all.length > 0 ? `&skip=${all.length}` : "";
+            const raw = await this.fetchText(`${API_URL}/api/chapters?postId=${postId}${skip}`);
+            const json = JSON.parse(raw);
+            const batch = json?.post?.chapters ?? [];
+            if (batch.length === 0)
+                break;
+            all.push(...batch);
+            const total = json?.totalChapterCount ?? 0;
+            if (!total || all.length >= total)
+                break;
+        }
+        return all;
+    }
+    // Capítulos embebidos en la página (sin fechas): {number:N,slug:"chapter-..."}
+    // y los objetos completos de initialChapters ({id:N,slug:"chapter-...",number:N}).
+    parsePageChapters(data) {
+        const out = [];
+        const re = /\{(?:number:([\d.]+),slug:"(chapter-[A-Za-z0-9_.-]+)"|id:\d+,slug:"(chapter-[A-Za-z0-9_.-]+)",number:([\d.]+))/g;
+        let m;
+        while ((m = re.exec(data)) !== null) {
+            const slug = m[2] ?? m[3] ?? "";
+            const number = parseFloat(m[1] ?? m[4] ?? "");
+            if (slug)
+                out.push({ slug, number: Number.isFinite(number) ? number : 0 });
+        }
+        return out;
+    }
+    // 2. Capítulos (API JSON del sitio; la página embebida como respaldo)
     async getChapters(mangaId) {
         const data = await this.getSeriesHTML(mangaId);
+        const { id: postId } = this.findSeriesPost(data, mangaId);
         const chapters = [];
         const seen = new Set();
-        // Cada capítulo: {"id":[0,N],"number":[0,N],"slug":[0,"chapter-N"],"title":[0,"..."|null],"createdAt":[0,"ISO"]...}
-        // El slug puede contener punto (capítulos decimales: chapter-510.1).
-        const chapRe = /"id":\[0,(\d+)\],"number":\[0,([\d.]+)\],"slug":\[0,"(chapter-[A-Za-z0-9_.-]+)"\],"title":\[0,(?:"((?:\\.|[^"\\])*)"|null)\],"createdAt":\[0,"([^"]+)"\]/g;
-        let m;
-        while ((m = chapRe.exec(data)) !== null) {
-            const chapNum = parseFloat(m[2]) || 0;
-            const slug = m[3];
-            const rawTitle = this.decodeEntities(m[4] || "").trim();
-            const createdAt = m[5];
-            if (seen.has(slug))
+        let apiChapters = [];
+        if (postId) {
+            try {
+                apiChapters = await this.fetchApiChapters(postId);
+            }
+            catch (e) {
+                apiChapters = [];
+            }
+        }
+        for (const ch of apiChapters) {
+            const slug = ch.slug;
+            if (!slug || seen.has(slug))
+                continue;
+            // Capítulos de pago/bloqueados: el lector solo muestra la pantalla de compra.
+            if (ch.isAccessible === false || ch.isLocked === true)
                 continue;
             seen.add(slug);
-            const name = rawTitle ? `Chapter ${m[2]} - ${rawTitle}` : `Chapter ${m[2]}`;
+            const numText = String(ch.number ?? "");
+            const chapNum = parseFloat(numText) || 0;
+            const rawTitle = (ch.title || "").trim();
+            const name = rawTitle ? `Chapter ${numText} - ${rawTitle}` : `Chapter ${numText}`;
             chapters.push(createChapter({
                 id: slug,
                 mangaId: mangaId,
                 name: name,
                 chapNum: chapNum,
-                time: createdAt ? new Date(createdAt) : new Date(),
+                time: ch.createdAt ? new Date(ch.createdAt) : new Date(),
                 langCode: "en"
             }));
+        }
+        // Sin API (o sin id de post) se cae a lo que haya embebido en la página.
+        if (chapters.length === 0) {
+            for (const ch of this.parsePageChapters(data)) {
+                if (seen.has(ch.slug))
+                    continue;
+                seen.add(ch.slug);
+                chapters.push(createChapter({
+                    id: ch.slug,
+                    mangaId: mangaId,
+                    name: `Chapter ${ch.number}`,
+                    chapNum: ch.number,
+                    time: new Date(),
+                    langCode: "en"
+                }));
+            }
         }
         // Más reciente primero
         chapters.sort((a, b) => b.chapNum - a.chapNum);
@@ -21804,17 +21928,11 @@ class HiveToons extends types_1.Source {
     }
     // 3. Páginas del capítulo (imágenes en el HTML del lector)
     async getChapterDetails(mangaId, chapterId) {
-        const request = createRequestObject({
-            url: `${WEB_URL}/series/${mangaId}/${chapterId}`,
-            method: "GET"
-        });
-        const response = await this.requestManager.schedule(request, 1);
-        this.CloudFlareError(response.status);
-        const $ = cheerio.load(response.data);
+        const $ = cheerio.load(await this.fetchText(`${WEB_URL}/series/${mangaId}/${chapterId}`));
         const pages = [];
-        $('img[data-reader-page-image]').each((i, el) => {
+        $('img[data-reader-page-image]').each((_i, el) => {
             const src = ($(el).attr('src') || $(el).attr('data-src') || '').trim();
-            if (src)
+            if (src.startsWith("https://"))
                 pages.push(src);
         });
         return createChapterDetails({
@@ -21824,17 +21942,12 @@ class HiveToons extends types_1.Source {
         });
     }
     // 4. Búsqueda (API JSON)
-    async getSearchResults(query, metadata) {
+    async getSearchResults(query, _metadata) {
         const term = encodeURIComponent(query.title ?? "");
-        const request = createRequestObject({
-            url: `${API_URL}/api/query?searchTerm=${term}&perPage=30`,
-            method: "GET"
-        });
-        const response = await this.requestManager.schedule(request, 1);
-        this.CloudFlareError(response.status);
+        const raw = await this.fetchText(`${API_URL}/api/query?searchTerm=${term}&perPage=30`);
         let json;
         try {
-            json = JSON.parse(response.data);
+            json = JSON.parse(raw);
         }
         catch (e) {
             throw new Error(`Error parsing JSON for search: ${e}`);
@@ -21849,72 +21962,64 @@ class HiveToons extends types_1.Source {
             results: tiles
         });
     }
-    // Extrae los tiles de una sección de posts embebida en el HTML del home.
-    // Cada post serializado empieza por: {"id":[0,N],"slug":[0,"..."],"postTitle":[0,"..."],"featuredImage":[0,"..."]
-    parseHomeSection(data, key, allKeys) {
-        const start = data.indexOf(`"${key}":[1,[`);
-        if (start === -1)
+    // Posts de una sección del home. Cada uno empieza por
+    // {id:N,slug:"...",postTitle:"...",featuredImage:"...",...,genres:[...]}.
+    parseHomeSection(data, key) {
+        const startMatch = new RegExp(`[{,]${key}:`).exec(data);
+        if (!startMatch)
             return [];
-        // El final de la sección es el inicio de la siguiente clave conocida (o el fin del documento)
+        const start = startMatch.index;
         let end = data.length;
-        for (const other of allKeys) {
+        for (const other of [...HOME_SECTIONS.map((s) => s.key), ...HOME_OTHER_KEYS]) {
             if (other === key)
                 continue;
-            const oi = data.indexOf(`"${other}":[1,[`);
-            if (oi > start && oi < end)
-                end = oi;
+            const om = new RegExp(`[{,]${other}:`).exec(data.slice(start + 1));
+            if (om && start + 1 + om.index < end)
+                end = start + 1 + om.index;
         }
         const seg = data.slice(start, end);
+        const postRe = /\{id:(\d+),slug:"((?:\\.|[^"\\])*)",postTitle:"((?:\\.|[^"\\])*)"/g;
+        const matches = [];
+        let m;
+        while ((m = postRe.exec(seg)) !== null)
+            matches.push({ m, index: m.index });
         const tiles = [];
         const seen = new Set();
-        const postRe = /"id":\[0,\d+\],"slug":\[0,"([^"]+)"\],"postTitle":\[0,"((?:\\.|[^"\\])*)"\],"featuredImage":\[0,"([^"]*)"\]/g;
-        let m;
-        while ((m = postRe.exec(seg)) !== null) {
-            const slug = this.decodeEntities(m[1]);
-            const title = this.decodeEntities(m[2]);
-            const image = this.decodeEntities(m[3]) || FALLBACK_COVER;
-            if (!slug || seen.has(slug))
+        for (const [i, entry] of matches.entries()) {
+            const cur = entry.m;
+            const slug = this.decodeString(cur[2] ?? "");
+            const title = this.decodeString(cur[3] ?? "").trim();
+            if (!slug || !title || seen.has(slug))
+                continue;
+            // Bloque del post: hasta el siguiente post.
+            const block = seg.slice(entry.index, matches[i + 1]?.index ?? seg.length);
+            // Las novelas no se pueden leer con este lector de imágenes.
+            if (/[{,]isNovel:!0/.test(block))
                 continue;
             seen.add(slug);
+            const image = this.strField(block, "featuredImage") || "";
             tiles.push(createMangaTile({
                 id: slug,
                 title: createIconText({ text: title }),
-                image: image
+                image: image.startsWith("https://") ? image : FALLBACK_COVER
             }));
         }
         return tiles;
     }
-    // 5. Secciones de la página principal (parseadas del HTML del home, datos reales)
+    // 5. Secciones de la página principal (estado embebido en el HTML del home)
     async getHomePageSections(sectionCallback) {
-        const request = createRequestObject({
-            url: `${WEB_URL}/`,
-            method: "GET"
-        });
-        const response = await this.requestManager.schedule(request, 1);
-        this.CloudFlareError(response.status);
-        const data = (response.data || "").replace(/&quot;/g, '"');
-        // Claves de las secciones embebidas en el home (orden del documento)
-        const sectionKeys = ["sliderPosts", "initalPosts", "novels"];
-        // Destacados (carrusel)
-        const featuredSection = createHomeSection({
-            id: 'featured',
-            title: 'Featured',
-            type: types_1.HomeSectionType.singleRowLarge,
-            view_more: false
-        });
-        sectionCallback(featuredSection);
-        featuredSection.items = this.parseHomeSection(data, "sliderPosts", sectionKeys);
-        sectionCallback(featuredSection);
-        // Últimos lanzamientos
-        const latestSection = createHomeSection({
-            id: 'latest',
-            title: 'Latest Releases',
-            type: types_1.HomeSectionType.singleRowNormal,
-            view_more: false
-        });
-        sectionCallback(latestSection);
-        latestSection.items = this.parseHomeSection(data, "initalPosts", sectionKeys);
-        sectionCallback(latestSection);
+        const data = await this.getPageState("/");
+        for (const s of HOME_SECTIONS) {
+            const section = createHomeSection({
+                id: s.key,
+                title: s.title,
+                type: s.large ? types_1.HomeSectionType.singleRowLarge : types_1.HomeSectionType.singleRowNormal,
+                view_more: false
+            });
+            sectionCallback(section);
+            section.items = this.parseHomeSection(data, s.key);
+            sectionCallback(section);
+        }
     }
 }
 exports.HiveToons = HiveToons;
