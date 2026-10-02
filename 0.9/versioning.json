@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-02T19:58:25.885Z",
+  "buildTime": "2026-10-02T20:20:19.120Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -156,6 +156,34 @@
         }
       ],
       "id": "NovelasLigeras"
+    },
+    {
+      "name": "Nyx Scans",
+      "description": "Read webtoons from Nyx Scans (nyxscans.com)",
+      "version": "1.0.0",
+      "icon": "icon.png",
+      "language": "en",
+      "contentRating": "MATURE",
+      "capabilities": [
+        4,
+        64,
+        1,
+        32
+      ],
+      "badges": [
+        {
+          "label": "Webtoon",
+          "textColor": "#ffffff",
+          "backgroundColor": "#e11d48"
+        }
+      ],
+      "developers": [
+        {
+          "name": "Felii",
+          "github": "https://github.com/feliivk"
+        }
+      ],
+      "id": "NyxScans"
     },
     {
       "name": "Olympus",

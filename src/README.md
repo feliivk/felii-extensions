@@ -34,7 +34,7 @@ what the site actually exposes:
 | Source | Strategy |
 |---|---|
 | AsuraScans, ManhwaWeb, Olympus | JSON API |
-| HiveToons, MangaOni, Topcur, VortexScans, Webtoons, ZonaTMO | HTML parsing with `cheerio` |
+| HiveToons, MangaOni, NyxScans, Topcur, VortexScans, Webtoons, ZonaTMO | HTML parsing with `cheerio` |
 
 Every source implements the same shape:
 
