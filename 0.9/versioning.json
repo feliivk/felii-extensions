@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-02T20:20:19.120Z",
+  "buildTime": "2026-10-11T14:44:46.320Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -12,7 +12,7 @@
     {
       "name": "AsuraScans",
       "description": "Read manhwa from Asura Scans (asurascans.com)",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "MATURE",
@@ -39,7 +39,7 @@
     {
       "name": "HiveToons",
       "description": "Read webtoons from HiveToons (hivetoons.org)",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "MATURE",
@@ -160,7 +160,7 @@
     {
       "name": "Nyx Scans",
       "description": "Read webtoons from Nyx Scans (nyxscans.com)",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "MATURE",
@@ -247,7 +247,7 @@
     {
       "name": "VortexScans",
       "description": "Read webtoons from VortexScans (vortexscans.org)",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "MATURE",
@@ -303,7 +303,7 @@
     {
       "name": "ZonaTMO",
       "description": "Lectura desde ZonaTMO (zonatmo.org)",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "icon": "icon.png",
       "language": "es",
       "contentRating": "MATURE",
