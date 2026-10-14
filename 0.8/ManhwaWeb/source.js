@@ -463,7 +463,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ManhwaWeb = exports.ManhwaWebInfo = void 0;
 const types_1 = require("@paperback/types");
 // URLs Base
-const API_URL = "https://manhwawebbackend-production.up.railway.app";
+// El backend dejó de servirse desde Railway (manhwawebbackend-production.up.railway.app)
+// y ahora vive en api.manhwaweb.com. Mismos endpoints y mismo formato de respuesta.
+const API_URL = "https://api.manhwaweb.com";
 const WEB_URL = "https://manhwaweb.com";
 // Constantes reutilizables
 const FALLBACK_COVER = "https://placehold.co/400x600?text=No+Cover";
@@ -471,7 +473,7 @@ const USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) Apple
 const SEE_CACHE_TTL = 60000; // 1 min
 const SEE_CACHE_MAX = 50;
 exports.ManhwaWebInfo = {
-    version: '1.2.1',
+    version: '1.2.2',
     name: 'ManhwaWeb',
     icon: 'icon.png',
     author: 'Felii',
@@ -553,6 +555,38 @@ class ManhwaWeb extends types_1.Source {
             image: this.pickImage(item)
         });
     }
+    joinCreators(list) {
+        if (!Array.isArray(list))
+            return "";
+        return list
+            .map((c) => (c?.name ?? "").trim())
+            .filter((n) => n.length > 0)
+            .join(", ");
+    }
+    // Últimos capítulos subidos. El backend nuevo los expone en /latest/new-manhwa
+    // (ids en `id_rel`); si ese endpoint fallara se recurre al bloque `manhwas`
+    // de /manhwa/nuevos (ids en `id_manhwa`).
+    async getLatestUpdates(fallback) {
+        let list = [];
+        try {
+            const data = await this.fetchJson(`${API_URL}/latest/new-manhwa`);
+            list = data.manhwas?.manhwas_esp ?? [];
+        }
+        catch {
+            list = fallback?.manhwas?.manhwas_esp ?? [];
+        }
+        const seen = new Set();
+        return list
+            .map((item) => ({ ...item, create: item.create ? new Date(item.create).getTime() || 0 : 0 }))
+            .sort((a, b) => b.create - a.create)
+            .filter((item) => {
+            const id = item.id_rel || item.id_manhwa || '';
+            if (!id || seen.has(id))
+                return false;
+            seen.add(id);
+            return true;
+        });
+    }
     // Mapea el estado textual de la API al enum numérico de Paperback
     mapStatus(statusText) {
         const s = (statusText || "").toLowerCase();
@@ -568,7 +602,8 @@ class ManhwaWeb extends types_1.Source {
         const title = this.pickTitle(data);
         const image = data._imagen || FALLBACK_COVER;
         const desc = data._sinopsis || "Sin descripción disponible.";
-        const author = data._extras?.autores?.join(', ') || "Desconocido";
+        const author = this.joinCreators(data.autor) || data._extras?.autores?.join(', ') || "Desconocido";
+        const artist = this.joinCreators(data.artista) || undefined;
         const tags = [];
         if (Array.isArray(data._categoris)) {
             for (const cat of data._categoris) {
@@ -588,6 +623,7 @@ class ManhwaWeb extends types_1.Source {
             rating: 0,
             status: this.mapStatus(data._status),
             author: author,
+            artist: artist,
             desc: desc,
             hentai: data._erotico === "si",
             lastUpdate: data._creation ? new Date(data._creation) : new Date(),
@@ -601,20 +637,22 @@ class ManhwaWeb extends types_1.Source {
         const chapters = [];
         for (const ch of rawChapters) {
             let chId = "";
-            const link = ch.link ?? ch.versions?.find((v) => v.link)?.link;
+            const espLink = ch.link ?? ch.versions?.find((v) => v.link)?.link;
+            const link = espLink ?? ch.link_raw;
             if (link) {
                 chId = link.split('/').filter(Boolean).pop() ?? "";
             }
             if (!chId)
                 chId = `${mangaId}-${ch.chapter}_01`;
             const created = ch.create ?? ch.versions?.[0]?.create;
+            const isRaw = !espLink && !!ch.link_raw;
             chapters.push(createChapter({
                 id: chId,
                 mangaId: mangaId,
-                name: `Capítulo ${ch.chapter}`,
-                chapNum: parseFloat(String(ch.chapter)) || 0,
+                name: isRaw ? `Capítulo ${ch.chapter} (Raw)` : `Capítulo ${ch.chapter}`,
+                chapNum: parseFloat(String(ch.chapter)) || 0, // Soporta decimales (ej. 51.2)
                 time: created ? new Date(created) : new Date(),
-                langCode: "es",
+                langCode: isRaw ? "ko" : "es",
             }));
         }
         // Más reciente primero
@@ -674,16 +712,8 @@ class ManhwaWeb extends types_1.Source {
             view_more: false
         });
         sectionCallback(latestSection);
-        const seen = new Set();
-        latestSection.items = (data.manhwas?.manhwas_esp ?? [])
-            .filter((item) => {
-            const id = item.id_manhwa || '';
-            if (!id || seen.has(id))
-                return false;
-            seen.add(id);
-            return true;
-        })
-            .map((item) => this.buildTile(item.id_manhwa || '', item));
+        latestSection.items = (await this.getLatestUpdates(data))
+            .map((item) => this.buildTile(item.id_rel || item.id_manhwa || '', item));
         sectionCallback(latestSection);
     }
 }
